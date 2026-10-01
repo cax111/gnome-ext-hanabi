@@ -63,6 +63,10 @@ export const LiveWallpaper = GObject.registerClass(
         private monitorWidth!: number;
         private monitorHeight!: number;
 
+        // Span mode: the renderer is one window covering the bounding box of all
+        // monitors; this is that box relative to our monitor's origin.
+        private spanBox: {x: number, y: number, width: number, height: number} | null = null;
+
         constructor(
             backgroundActor: Meta.BackgroundActor,
             settings: Gio.Settings,
@@ -106,6 +110,18 @@ export const LiveWallpaper = GObject.registerClass(
             this.monitorWidth = width;
             this.monitorHeight = height;
 
+            if (settings.get_boolean('span-monitors')) {
+                const monitors = Main.layoutManager.monitors;
+                const {x, y} = monitors[this.monitorIndex];
+                const x1 = Math.min(...monitors.map(m => m.x));
+                const y1 = Math.min(...monitors.map(m => m.y));
+                const x2 = Math.max(...monitors.map(m => m.x + m.width));
+                const y2 = Math.max(...monitors.map(m => m.y + m.height));
+                this.spanBox = {x: x1 - x, y: y1 - y, width: x2 - x1, height: y2 - y1};
+                // Only show our monitor's slice of the oversized clone.
+                this.clip_to_allocation = true;
+            }
+
             backgroundActor.layout_manager = new Clutter.BinLayout();
             backgroundActor.add_child(this);
 
@@ -127,6 +143,24 @@ export const LiveWallpaper = GObject.registerClass(
             this.connect('notify::allocation', () => this.applyBounds());
 
             this.applyWallpaper();
+        }
+
+        override vfunc_allocate(box: Clutter.ActorBox): void {
+            super.vfunc_allocate(box);
+            if (!this.spanBox || !this.wallpaper)
+                return;
+
+            // Our allocation may be scaled relative to the monitor (e.g. workspace
+            // backgrounds in the overview), so scale the span box to match.
+            const scaleX = box.get_width() / this.monitorWidth;
+            const scaleY = box.get_height() / this.monitorHeight;
+            const {x, y, width, height} = this.spanBox;
+            this.wallpaper.allocate(new Clutter.ActorBox({
+                x1: x * scaleX,
+                y1: y * scaleY,
+                x2: (x + width) * scaleX,
+                y2: (y + height) * scaleY,
+            }));
         }
 
         isLockScreen(): boolean {
@@ -219,10 +253,23 @@ export const LiveWallpaper = GObject.registerClass(
         private getRenderer(): Clutter.Actor | null {
             // Renderer windows are hidden from the public get_window_actors, so use the
             // injected unfiltered accessor to find them.
-            const hanabiWindowActors = this.getWindowActors().filter(
+            let hanabiWindowActors = this.getWindowActors().filter(
                 actor => actor.meta_window?.title?.includes(APPLICATION_ID)
             );
 
+            if (this.spanBox) {
+                const renderer = hanabiWindowActors.find(
+                    actor => actor.meta_window!.title!.endsWith('|span')
+                );
+                if (!renderer)
+                    logger.debug('No span renderer window found');
+                return renderer ?? null;
+            }
+
+            // Ignore a leftover span window while the renderer restarts after the mode changed.
+            hanabiWindowActors = hanabiWindowActors.filter(
+                actor => !actor.meta_window!.title!.endsWith('|span')
+            );
             const numMonitors = global.display.get_n_monitors();
             if (hanabiWindowActors.length < numMonitors) {
                 logger.debug(

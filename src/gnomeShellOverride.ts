@@ -54,7 +54,7 @@ export class GnomeShellOverride {
         this.settings = settings;
     }
 
-    private reloadBackgrounds(): void {
+    reloadBackgrounds(): void {
         logger.debug('Reloading backgrounds');
         this.wallpaperActors.forEach(actor => actor.destroy());
         this.wallpaperActors.clear();

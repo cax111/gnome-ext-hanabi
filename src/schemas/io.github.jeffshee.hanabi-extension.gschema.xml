@@ -119,6 +119,12 @@
             <description>Enable graphics offload for improved performance (requires GTK 4.14+)</description>
         </key>
 
+        <key name="span-monitors" type="b">
+            <default>false</default>
+            <summary>Span Across Monitors</summary>
+            <description>Render one wallpaper stretched across all monitors instead of one per monitor</description>
+        </key>
+
         <key name="content-fit" type="i">
             <range min="0" max="3" />
             <default>1</default>

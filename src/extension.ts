@@ -154,6 +154,16 @@ export default class HanabiExtension extends Extension {
         );
         this.signalConnections.push([this.settings!, showOnLockScreenChangedId]);
 
+        const spanMonitorsChangedId = this.settings!.connect(
+            'changed::span-monitors',
+            () => {
+                logger.debug('span-monitors changed, reloading backgrounds and relaunching renderer');
+                this.shellOverride?.reloadBackgrounds();
+                this.killCurrentProcess();
+            }
+        );
+        this.signalConnections.push([this.settings!, spanMonitorsChangedId]);
+
         this.isEnabled = true;
         if (this.launchRendererTimeoutId)
             GLib.source_remove(this.launchRendererTimeoutId);

@@ -24,6 +24,11 @@ import Gst from 'gi://Gst';
 
 import {APPLICATION_ID, RENDERER_OBJECT_PATH} from '../constants.js';
 
+// gtk4paintablesink (via glsinkbin) hands GTK GL textures; with the default Vulkan
+// renderer GTK has to copy every frame, which on NVIDIA costs a lot of CPU. Prefer
+// the GL renderer, but keep any GSK_RENDERER the user set explicitly.
+GLib.setenv('GSK_RENDERER', 'gl', false);
+
 // [major, minor, micro, nano]
 const gstVersion = Gst.version();
 console.log(`GStreamer version: ${gstVersion.join('.')}`);
@@ -76,6 +81,8 @@ const isEnableVADecoders = extSettings?.get_boolean('enable-va') ?? false;
 const isEnableNvSl = extSettings?.get_boolean('enable-nvsl') ?? false;
 
 const isEnableGraphicsOffload = extSettings?.get_boolean('enable-graphics-offload') ?? false;
+// Read once: the extension restarts the renderer when this setting changes.
+const spanMonitors = extSettings?.get_boolean('span-monitors') ?? false;
 
 let codePath = 'src';
 let contentFit = extSettings?.get_int('content-fit') ?? Gtk.ContentFit.CONTAIN;
@@ -94,10 +101,12 @@ let windowed = false;
 let isDebugMode = extSettings?.get_boolean('debug-mode') ?? true;
 let changeWallpaperTimerId: number | null = null;
 
+type Geometry = {x: number, y: number, width: number, height: number};
+
 const HanabiRendererWindow = GObject.registerClass(
     {GTypeName: 'HanabiRendererWindow'},
     class HanabiRendererWindow extends Gtk.ApplicationWindow {
-        _setup(widget: Gtk.Widget, gdkMonitor: Gdk.Monitor): void {
+        _setup(widget: Gtk.Widget, geometry: Geometry): void {
             const cssProvider = new Gtk.CssProvider();
             cssProvider.load_from_file(
                 Gio.File.new_for_path(
@@ -111,7 +120,6 @@ const HanabiRendererWindow = GObject.registerClass(
             );
             this.set_child(widget);
             if (!windowed) {
-                const geometry = gdkMonitor.get_geometry();
                 this.set_size_request(geometry.width, geometry.height);
                 this.set_resizable(false);
             }
@@ -336,8 +344,24 @@ const HanabiRenderer = GObject.registerClass(
             }
         }
 
+        // In span mode a single window covers the bounding box of all monitors
+        // (tagged "|span"); otherwise one window per monitor (tagged "|<index>").
+        private getRendererTargets(): {geometry: Geometry, tag: string}[] {
+            const geometries = this.monitors.map(gdkMonitor => gdkMonitor.get_geometry());
+            if (!spanMonitors || geometries.length === 0)
+                return geometries.map((geometry, index) => ({geometry, tag: `${index}`}));
+
+            const x1 = Math.min(...geometries.map(g => g.x));
+            const y1 = Math.min(...geometries.map(g => g.y));
+            const x2 = Math.max(...geometries.map(g => g.x + g.width));
+            const y2 = Math.max(...geometries.map(g => g.y + g.height));
+            const geometry = {x: x1, y: y1, width: x2 - x1, height: y2 - y1};
+            console.log(`spanning ${geometries.length} monitors: ${geometry.width}x${geometry.height}+${x1}+${y1}`);
+            return [{geometry, tag: 'span'}];
+        }
+
         private buildUI(): void {
-            this.monitors.forEach((gdkMonitor, index) => {
+            this.getRendererTargets().forEach(({geometry, tag}, index) => {
                 let widget: Gtk.Widget | null = this.getWidgetFromSharedPaintable();
 
                 if (index > 0 && !widget)
@@ -363,7 +387,6 @@ const HanabiRenderer = GObject.registerClass(
                 if (!widget)
                     return;
 
-                const geometry = gdkMonitor.get_geometry();
                 const state = {
                     position: [geometry.x, geometry.y],
                     keepAtBottom: true,
@@ -371,8 +394,8 @@ const HanabiRenderer = GObject.registerClass(
                     keepPosition: true,
                 };
                 const windowTitle = nohide
-                    ? `Hanabi Renderer #${index} (using ${this.gstImplName})`
-                    : `@${APPLICATION_ID}!${JSON.stringify(state)}|${index}`;
+                    ? `Hanabi Renderer #${tag} (using ${this.gstImplName})`
+                    : `@${APPLICATION_ID}!${JSON.stringify(state)}|${tag}`;
 
                 const window = new HanabiRendererWindow({
                     application: this,
@@ -381,7 +404,7 @@ const HanabiRenderer = GObject.registerClass(
                     default_width: windowed ? windowDimension.width : geometry.width,
                     title: windowTitle,
                 });
-                window._setup(widget, gdkMonitor);
+                window._setup(widget, geometry);
                 this.hanabiWindows.push(window);
             });
             console.log(`using ${this.gstImplName} for video output`);

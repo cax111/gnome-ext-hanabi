@@ -39,6 +39,8 @@ export default class HanabiExtensionPreferences extends ExtensionPreferences {
         page.add(generalGroup);
         prefsRowVideoPath(win, generalGroup);
         prefsRowFitMode(win, generalGroup);
+        prefsRowBoolean(win, generalGroup, _('Span Across Monitors'), 'span-monitors',
+            _('Stretch one wallpaper across all monitors instead of repeating it on each'));
         prefsRowBoolean(win, generalGroup, _('Mute Audio'), 'mute', '');
         prefsRowInt(win, generalGroup, _('Volume Level'), 'volume', '', 0, 100, 1, 10);
         prefsRowBoolean(win, generalGroup, _('Random Start Position'), 'random-start-position',
